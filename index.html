@@ -1626,18 +1626,29 @@ const NOS_SIM = (() => {   // árvore fake: espelha o contrato do núcleo
   };
   T.sh.lig.push({ de: 'Texture', saida: 'Color', para: 'Mix', entrada: 'Color1' });
   const arv = id => T[id], achar = (a, n) => a.nos.find(x => x.nome === n);
-  const rel = a => a.nos.forEach(n => { n.entradas.forEach(e => { e.ligado = a.lig.some(l => l.para === n.nome && l.entrada === e.nome); }); });
+  const rs = (a, nome, lado, ref) => { const n = achar(a, nome), l = n && n[lado === 'saida' ? 'saidas' : 'entradas']; return String(ref)[0] === '#' && l && l[+String(ref).slice(1)] ? l[+String(ref).slice(1)].nome : ref; };
+  const rel = a => { a.nos.forEach(n => { n.campos = n.campos || []; n.saidas.forEach((s, i) => { s.idx = i; }); n.entradas.forEach((e, i) => { e.idx = i; e.limite = e.limite || 1; e.ligado = a.lig.some(l => l.para === n.nome && l.entrada === e.nome); }); });
+    a.lig.forEach(l => { const A = achar(a, l.de), B = achar(a, l.para); l.saida_i = A ? A.saidas.findIndex(s => s.nome === l.saida) : -1; l.entrada_i = B ? B.entradas.findIndex(s => s.nome === l.entrada) : -1; }); };
+  T.lg.nos[0].campos = [{ id: 'key', nome: 'Key', kind: 'e', principal: true, valor: 'AKEY', itens: [['AKEY', 'A'], ['BKEY', 'B'], ['SPACEKEY', 'Space']] }, { id: 'tick_skip', nome: 'Skip', kind: 'i', principal: false, valor: 0, min: 0, max: 10000 }];
+  T.lg.nos[2].campos = [{ id: 'use_local_location', nome: 'Local', kind: 'b', principal: true, valor: false }];
+  T.lg.nos[1].entradas.push({ nome: 'A', tipo: 'bool', valor: false, ligado: false });
   Object.values(T).forEach(rel);
   return {
     arvores: () => Object.values(T).map(t => t.info),
     ler: id => { const a = arv(id); return a ? JSON.parse(JSON.stringify({ nos: a.nos, ligacoes: a.lig })) : { nos: [], ligacoes: [] }; },
     mover: (id, n, x, y) => { const o = achar(arv(id), n); if (o) { o.x = x; o.y = y; } },
     selecionar: (id, n, mais) => { const a = arv(id); a.nos.forEach(o => { if (o.nome === n) o.sel = true; else if (!mais) o.sel = false; }); },
-    ligar: (id, A, s, B, e) => { const a = arv(id); a.lig = a.lig.filter(l => !(l.para === B && l.entrada === e)); a.lig.push({ de: A, saida: s, para: B, entrada: e }); rel(a); },
-    desligar: (id, B, e) => { const a = arv(id); a.lig = a.lig.filter(l => !(l.para === B && l.entrada === e)); rel(a); },
+    ligar: (id, A, s, B, e) => { const a = arv(id); s = rs(a, A, 'saida', s); e = rs(a, B, 'entrada', e); a.lig = a.lig.filter(l => !(l.para === B && l.entrada === e)); a.lig.push({ de: A, saida: s, para: B, entrada: e }); rel(a); },
+    desligar: (id, B, e) => { const a = arv(id); e = rs(a, B, 'entrada', e); a.lig = a.lig.filter(l => !(l.para === B && l.entrada === e)); rel(a); },
+    desligar_de: (id, A, s, B, e) => { const a = arv(id); s = rs(a, A, 'saida', s); e = rs(a, B, 'entrada', e); a.lig = a.lig.filter(l => !(l.de === A && l.saida === s && l.para === B && l.entrada === e)); rel(a); },
+    prop: (id, n, k, v) => { const o = achar(arv(id), n), c = o && o.campos.find(q => q.id === k); if (c) c.valor = JSON.parse(v); },
     apagar: (id, n) => { const a = arv(id); a.nos = a.nos.filter(o => o.nome !== n); a.lig = a.lig.filter(l => l.de !== n && l.para !== n); rel(a); }
   };
 })();
+const NOS_EXP = new Set();   // nós com todos os campos à mostra
+const nosCamposVis = n => (n.campos || []).filter(c => c.kind !== 'x' && (NOS_EXP.has(n.nome) || c.principal));
+const nosTemMais = n => (n.campos || []).some(c => c.kind !== 'x' && !c.principal);
+const nosLinhasCampos = n => nosCamposVis(n).length + (nosTemMais(n) ? 1 : 0);
 const NOS = { arvores: [], id: null, d: { nos: [], ligacoes: [] }, vx: 40, vy: 40, z: 1, arrasta: null, caixa: null, sel: new Set(), ligSel: null };
 const NOS_CAB = 22, NOS_LIN = 18;
 function nosVisivel() { const e = document.getElementById('nos'); return !!e && !e.hidden && !document.body.classList.contains('baixo-fechado'); }
@@ -1654,7 +1665,7 @@ function nosCarregar() {
   if (NOS.id == null) { NOS.d = { nos: [], ligacoes: [] }; return; }
   try { const t = nosReal() ? JSON.parse(nucleo.modulo.ccall('nucleo_nos_ler', 'string', ['string'], [String(NOS.id)])) : NOS_SIM.ler(NOS.id); NOS.d = t || { nos: [], ligacoes: [] }; } catch (_) { NOS.d = { nos: [], ligacoes: [] }; }
   NOS.d.nos.forEach(n => { [...n.entradas, ...n.saidas].forEach(k => { if (/^Range.*Socket$/.test(k.bl || '')) { k.tipo = 'pulso'; k.valor = null; } }); });   // soquetes de pulso/evento (Logic/UI Tree): sem valor
-  NOS.d.nos.forEach(n => { n.w = n.w || 140; n.h = Math.max(n.h || 0, NOS_CAB + (n.saidas.length + n.entradas.length) * NOS_LIN + 8); });
+  NOS.d.nos.forEach(n => { n.campos = n.campos || []; n.w = n.w || 140; n.h = Math.max(n.h || 0, NOS_CAB + (n.saidas.length + n.entradas.length + nosLinhasCampos(n)) * NOS_LIN + 8); });
   NOS.sel = new Set(NOS.d.nos.filter(n => n.sel).map(n => n.nome));
 }
 // aplica no núcleo (ou na simulação); com rotulo, registra um passo de undo
@@ -1675,16 +1686,60 @@ function nosEnquadrar() {
 }
 const nosNo = nome => NOS.d.nos.find(n => n.nome === nome);
 // y do núcleo cresce para cima (como no Blender): na tela o topo do nó fica em -y
-function nosSockPos(n, lado, nome) {
-  if (lado === 'saida') { const i = n.saidas.findIndex(s => s.nome === nome); return i < 0 ? null : { x: n.x + n.w, y: -n.y + NOS_CAB + NOS_LIN * i + NOS_LIN / 2 }; }
-  const i = n.entradas.findIndex(s => s.nome === nome); return i < 0 ? null : { x: n.x, y: -n.y + NOS_CAB + NOS_LIN * (n.saidas.length + i) + NOS_LIN / 2 };
+function nosSockPos(n, lado, i) {   // i = índice do soquete (idx), nunca o nome: RangeLogicAnd tem 3 entradas "In"
+  if (i == null || i < 0) return null;
+  if (lado === 'saida') return i >= n.saidas.length ? null : { x: n.x + n.w, y: -n.y + NOS_CAB + NOS_LIN * i + NOS_LIN / 2 };
+  return i >= n.entradas.length ? null : { x: n.x, y: -n.y + NOS_CAB + NOS_LIN * (n.saidas.length + i) + NOS_LIN / 2 };
+}
+// campos (propriedades do nó Python): linhas depois dos soquetes
+function nosLinhaCampo(n, k) { return { y: -n.y + NOS_CAB + NOS_LIN * (n.saidas.length + n.entradas.length + k) + 3, h: NOS_LIN }; }
+function nosAcertarCampo(wx, wy) {
+  for (let i = NOS.d.nos.length - 1; i >= 0; i--) {
+    const n = NOS.d.nos[i]; if (wx < n.x || wx > n.x + n.w) continue;
+    const vis = nosCamposVis(n);
+    for (let k = 0; k <= vis.length; k++) {
+      const r = nosLinhaCampo(n, k); if (wy < r.y || wy > r.y + r.h) continue;
+      if (k < vis.length) return { n, c: vis[k] };
+      if (nosTemMais(n)) return { n, mais: true };
+    }
+  }
+  return null;
+}
+const nosTxtCampo = c => {
+  const v = c.valor;
+  if (c.kind === 'b') return (v ? '[x] ' : '[ ] ') + c.nome;
+  let t = v;
+  if (c.kind === 'e') { const it = (c.itens || []).find(q => q[0] === v); t = it ? it[1] : v; }
+  else if (typeof v === 'number') t = Math.round(v * 1000) / 1000;
+  else if (Array.isArray(v)) t = '(' + v.map(q => Math.round(q * 100) / 100).join(', ') + ')';
+  else if (c.kind === 'p' && !v) t = '-';
+  return c.nome + ': ' + t;
+};
+function nosEditarCampo(n, c, cx, cy) {
+  const aplicar = v => nosOp('prop', ['string', 'string', 'string'], [n.nome, c.id, JSON.stringify(v)], 'Propriedade do nó');
+  if (c.kind === 'b') { aplicar(!c.valor); return; }
+  if (c.kind === 'e' || c.kind === 'p') {   // escolha numa lista, no próprio lugar
+    const op = c.kind === 'e' ? c.itens.map(q => [q[0], q[1]]) : [['', '(nenhum)'], ...(c.opcoes || []).map(q => [q, q])];
+    const sel = document.createElement('select'); sel.style.cssText = 'position:fixed;z-index:99;left:' + cx + 'px;top:' + cy + 'px;max-width:260px';
+    sel.innerHTML = op.map(q => '<option value="' + q[0].replace(/"/g, '&quot;') + '">' + q[1] + '</option>').join('');
+    sel.value = c.valor == null ? '' : c.valor;
+    let fim = false; const sai = ok => { if (fim) return; fim = true; const v = sel.value; sel.remove(); if (ok && v !== c.valor) aplicar(v); };
+    sel.onchange = () => sai(true); sel.onblur = () => sai(false);
+    sel.onkeydown = e => { if (e.key === 'Escape') sai(false); };
+    document.body.appendChild(sel); sel.focus(); try { sel.showPicker(); } catch (_) {}
+    window.__nosSel = sel; return;
+  }
+  const r = prompt(n.nome + ' / ' + c.nome + (c.kind === 'v' ? '  (lista JSON)' : ''), c.kind === 'v' ? JSON.stringify(c.valor) : String(c.valor == null ? '' : c.valor)); if (r == null) return;
+  if (c.kind === 's') aplicar(r);
+  else if (c.kind === 'v') { try { aplicar(JSON.parse(r)); } catch (_) {} }
+  else { const x = parseFloat(r); if (!isNaN(x)) aplicar(x); }
 }
 const nosParaMundo = (x, y) => ({ x: (x - NOS.vx) / NOS.z, y: (y - NOS.vy) / NOS.z });
 function nosAcertarSock(wx, wy) {
   const r = 8 / NOS.z;
   for (const n of NOS.d.nos) {
     for (const [lado, lista] of [['saida', n.saidas], ['entrada', n.entradas]]) for (const s of lista) {
-      const p = nosSockPos(n, lado, s.nome); if (p && Math.hypot(p.x - wx, p.y - wy) <= r) return { n, lado, s, p };
+      const p = nosSockPos(n, lado, s.idx); if (p && Math.hypot(p.x - wx, p.y - wy) <= r) return { n, lado, s, p };
     }
   }
   return null;
@@ -1694,7 +1749,7 @@ function nosCurva(g, a, b) { const d = Math.max(30, Math.abs(b.x - a.x) * 0.5); 
 function nosAcertarLig(wx, wy) {
   for (const l of NOS.d.ligacoes) {
     const A = nosNo(l.de), B = nosNo(l.para); if (!A || !B) continue;
-    const a = nosSockPos(A, 'saida', l.saida), b = nosSockPos(B, 'entrada', l.entrada); if (!a || !b) continue;
+    const a = nosSockPos(A, 'saida', l.saida_i), b = nosSockPos(B, 'entrada', l.entrada_i); if (!a || !b) continue;
     const d = Math.max(30, Math.abs(b.x - a.x) * 0.5);
     for (let t = 0; t <= 1; t += 0.04) {
       const u = 1 - t, x = u*u*u*a.x + 3*u*u*t*(a.x + d) + 3*u*t*t*(b.x - d) + t*t*t*b.x, y = u*u*u*a.y + 3*u*u*t*a.y + 3*u*t*t*b.y + t*t*t*b.y;
@@ -1722,8 +1777,8 @@ function nosDesenhar() {
   g.font = '11px sans-serif'; g.textBaseline = 'middle';
   for (const l of NOS.d.ligacoes) {
     const A = nosNo(l.de), B = nosNo(l.para); if (!A || !B) continue;
-    const a = nosSockPos(A, 'saida', l.saida), b = nosSockPos(B, 'entrada', l.entrada); if (!a || !b) continue;
-    const s = A.saidas.find(q => q.nome === l.saida);
+    const a = nosSockPos(A, 'saida', l.saida_i), b = nosSockPos(B, 'entrada', l.entrada_i); if (!a || !b) continue;
+    const s = A.saidas[l.saida_i];
     g.strokeStyle = NOS.ligSel === l ? '#ffb84d' : nosCor(s && s.tipo); g.lineWidth = NOS.ligSel === l ? 3 : 2; nosCurva(g, a, b); g.stroke();
   }
   if (NOS.arrasta && NOS.arrasta.modo === 'ligar') {
@@ -1736,9 +1791,9 @@ function nosDesenhar() {
     g.beginPath(); g.roundRect(x, y, n.w, n.h, 5); g.fill(); g.stroke();
     g.fillStyle = nosCorCat(n.tipo); g.beginPath(); g.roundRect(x, y, n.w, NOS_CAB, [5, 5, 0, 0]); g.fill();
     g.fillStyle = cor('--texto'); g.textAlign = 'left'; g.fillText(n.rotulo || n.nome, x + 8, y + NOS_CAB / 2);
-    n.saidas.forEach(s => { const p = nosSockPos(n, 'saida', s.nome); g.fillStyle = nosCor(s.tipo); g.beginPath(); g.arc(p.x, p.y, 5, 0, 7); g.fill(); g.fillStyle = cor('--texto'); g.textAlign = 'right'; g.fillText(s.nome, p.x - 10, p.y); });
+    n.saidas.forEach(s => { const p = nosSockPos(n, 'saida', s.idx); g.fillStyle = nosCor(s.tipo); g.beginPath(); g.arc(p.x, p.y, 5, 0, 7); g.fill(); g.fillStyle = cor('--texto'); g.textAlign = 'right'; g.fillText(s.nome, p.x - 10, p.y); });
     n.entradas.forEach(e => {
-      const p = nosSockPos(n, 'entrada', e.nome); g.fillStyle = nosCor(e.tipo); g.beginPath(); g.arc(p.x, p.y, 5, 0, 7); g.fill();
+      const p = nosSockPos(n, 'entrada', e.idx); g.fillStyle = nosCor(e.tipo); g.beginPath(); g.arc(p.x, p.y, 5, 0, 7); g.fill();
       g.fillStyle = cor('--texto'); g.textAlign = 'left';
       let v = ''; const arr = Array.isArray(e.valor) && !e.ligado;
       if (!e.ligado && e.valor != null && !arr && typeof e.valor !== 'object') v = ': ' + (typeof e.valor === 'number' ? Math.round(e.valor * 1000) / 1000 : e.valor);
@@ -1750,13 +1805,18 @@ function nosDesenhar() {
         g.fillRect(p.x + n.w - 38, p.y - 6, 26, 12); g.strokeRect(p.x + n.w - 38, p.y - 6, 26, 12);
       }
     });
+    nosCamposVis(n).forEach((c, k) => {   // propriedades do nó Python
+      const r = nosLinhaCampo(n, k); g.fillStyle = 'rgba(0,0,0,.28)'; g.beginPath(); g.roundRect(x + 5, r.y, n.w - 10, r.h - 3, 3); g.fill();
+      g.fillStyle = cor('--texto'); g.textAlign = 'left'; g.save(); g.beginPath(); g.rect(x + 7, r.y, n.w - 14, r.h); g.clip(); g.fillText(nosTxtCampo(c), x + 9, r.y + (r.h - 3) / 2); g.restore();
+    });
+    if (nosTemMais(n)) { const r = nosLinhaCampo(n, nosCamposVis(n).length); g.fillStyle = cor('--texto'); g.globalAlpha = .6; g.textAlign = 'left'; g.fillText((NOS_EXP.has(n.nome) ? '\u25BE menos' : '\u25B8 mais'), x + 9, r.y + (r.h - 3) / 2); g.globalAlpha = 1; }
   }
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   if (NOS.caixa) { const k = NOS.caixa; g.strokeStyle = '#ffb84d'; g.fillStyle = 'rgba(255,184,77,.12)'; g.fillRect(k.x0, k.y0, k.x1 - k.x0, k.y1 - k.y0); g.strokeRect(k.x0, k.y0, k.x1 - k.x0, k.y1 - k.y0); }
   const i = document.getElementById('nos-info'); if (i) i.textContent = NOS.d.nos.length + ' nós, ' + NOS.d.ligacoes.length + ' ligações' + (nosReal() ? '' : ' (simulado)');
 }
 function nosApagarSel() {
-  if (NOS.ligSel) { const l = NOS.ligSel; NOS.ligSel = null; nosOp('desligar', ['string', 'string'], [l.para, l.entrada], 'Apagar ligação'); return; }
+  if (NOS.ligSel) { const l = NOS.ligSel; NOS.ligSel = null; nosOp('desligar_de', ['string', 'string', 'string', 'string'], [l.de, '#' + l.saida_i, l.para, '#' + l.entrada_i], 'Apagar ligação'); return; }
   const nomes = [...NOS.sel]; if (!nomes.length) return;
   tlUndo('Apagar nós'); nomes.forEach(n => nosOp('apagar', ['string'], [n], null)); atualizarUndo();
 }
@@ -1786,11 +1846,13 @@ function nosMenuAdd() {
   };
   c.ondblclick = e => {
     const r = c.getBoundingClientRect(), m = nosParaMundo(e.clientX - r.left, e.clientY - r.top), sk = nosAcertarSock(m.x, m.y);
+    const fc = !sk && nosAcertarCampo(m.x, m.y);
+    if (fc && fc.c && fc.c.kind !== 'b') { nosEditarCampo(fc.n, fc.c, e.clientX, e.clientY); return; }
     if (!sk || sk.lado !== 'entrada' || sk.s.ligado || sk.s.valor == null) return;
     let v = prompt(sk.n.nome + ' / ' + sk.s.nome + (sk.s.tipo === 'rgba' ? '  (JSON [r,g,b,a] ou #RRGGBB)' : ''), JSON.stringify(sk.s.valor)); if (v == null) return;
     const hx = /^#([0-9a-f]{6})$/i.exec(v.trim());
     if (hx && Array.isArray(sk.s.valor)) { const k = [0, 2, 4].map(i => Math.pow(parseInt(hx[1].substr(i, 2), 16) / 255, 2.2)); v = JSON.stringify([...k, sk.s.valor[3] != null ? sk.s.valor[3] : 1]); }
-    nosOp('valor', ['string', 'string', 'string'], [sk.n.nome, sk.s.nome, v], 'Valor do nó');
+    nosOp('valor', ['string', 'string', 'string'], [sk.n.nome, '#' + sk.s.idx, v], 'Valor do nó');
   };
   const pos = e => { const r = c.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
   document.getElementById('nos-arv').onchange = e => { NOS.id = e.target.value; nosCarregar(); nosEnquadrar(); nosMenuAdd(); nosDesenhar(); };
@@ -1801,12 +1863,15 @@ function nosMenuAdd() {
     if (e.button !== 0) return;
     const sk = nosAcertarSock(m.x, m.y);
     if (sk) {
-      if (sk.lado === 'entrada' && sk.s.ligado) {   // pega a ligação existente e religa a partir da saída original
-        const l = NOS.d.ligacoes.find(q => q.para === sk.n.nome && q.entrada === sk.s.nome), A = l && nosNo(l.de), pa = A && nosSockPos(A, 'saida', l.saida);
-        if (pa) { NOS.arrasta = { modo: 'ligar', lado: 'saida', n: A, nome: l.saida, p: pa, fim: m, solta: l }; nosDesenhar(); return; }
+      if (sk.lado === 'entrada' && sk.s.ligado) {   // pega a ligação existente (a última) e religa a partir da saída original
+        const ls = NOS.d.ligacoes.filter(q => q.para === sk.n.nome && q.entrada_i === sk.s.idx), l = ls[ls.length - 1], A = l && nosNo(l.de), pa = A && nosSockPos(A, 'saida', l.saida_i);
+        if (pa) { NOS.arrasta = { modo: 'ligar', lado: 'saida', n: A, idx: l.saida_i, p: pa, fim: m, solta: l }; nosDesenhar(); return; }
       }
-      NOS.arrasta = { modo: 'ligar', lado: sk.lado, n: sk.n, nome: sk.s.nome, p: sk.p, fim: m }; nosDesenhar(); return;
+      NOS.arrasta = { modo: 'ligar', lado: sk.lado, n: sk.n, idx: sk.s.idx, p: sk.p, fim: m }; nosDesenhar(); return;
     }
+    const fc = nosAcertarCampo(m.x, m.y);
+    if (fc && fc.mais) { NOS.arrasta = null; NOS_EXP.has(fc.n.nome) ? NOS_EXP.delete(fc.n.nome) : NOS_EXP.add(fc.n.nome); nosCarregar(); nosDesenhar(); return; }
+    if (fc && fc.c.kind === 'b') { NOS.arrasta = null; nosEditarCampo(fc.n, fc.c, e.clientX, e.clientY); return; }
     const n = nosAcertarNo(m.x, m.y);
     if (n) {
       if (e.shiftKey) { NOS.sel.has(n.nome) ? NOS.sel.delete(n.nome) : NOS.sel.add(n.nome); nosOp('selecionar', ['string', 'number'], [n.nome, 1], null); }
@@ -1833,9 +1898,13 @@ function nosMenuAdd() {
     else if (a.modo === 'ligar') {
       const sk = nosAcertarSock(m.x, m.y);
       if (sk && sk.n !== a.n && sk.lado !== a.lado) {
-        const [A, s, B, en] = a.lado === 'saida' ? [a.n.nome, a.nome, sk.n.nome, sk.s.nome] : [sk.n.nome, sk.s.nome, a.n.nome, a.nome];
-        nosOp('ligar', ['string', 'string', 'string', 'string'], [A, s, B, en], 'Ligar nós');
-      } else if (a.solta) nosOp('desligar', ['string', 'string'], [a.solta.para, a.solta.entrada], 'Desligar nós');
+        const [A, s, B, en] = a.lado === 'saida' ? [a.n.nome, '#' + a.idx, sk.n.nome, '#' + sk.s.idx] : [sk.n.nome, '#' + sk.s.idx, a.n.nome, '#' + a.idx];
+        const l0 = a.solta, igual = l0 && l0.de === A && '#' + l0.saida_i === s && l0.para === B && '#' + l0.entrada_i === en;
+        if (!igual) {
+          if (l0) { tlUndo('Religar nós'); nosOp('desligar_de', ['string', 'string', 'string', 'string'], [l0.de, '#' + l0.saida_i, l0.para, '#' + l0.entrada_i], null); nosOp('ligar', ['string', 'string', 'string', 'string'], [A, s, B, en], null); atualizarUndo(); }
+          else nosOp('ligar', ['string', 'string', 'string', 'string'], [A, s, B, en], 'Ligar nós');
+        }
+      } else if (a.solta) nosOp('desligar_de', ['string', 'string', 'string', 'string'], [a.solta.de, '#' + a.solta.saida_i, a.solta.para, '#' + a.solta.entrada_i], 'Desligar nós');
     } else if (a.modo === 'caixa') {
       const k = NOS.caixa, a0 = nosParaMundo(Math.min(k.x0, k.x1), Math.min(k.y0, k.y1)), b0 = nosParaMundo(Math.max(k.x0, k.x1), Math.max(k.y0, k.y1));
       let mais = e.shiftKey ? 1 : 0;
