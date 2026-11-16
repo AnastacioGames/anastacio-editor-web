@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "name": "player",
+  "title": "player",
+  "version": "0",
+  "created_utc": "2026-11-16T17:42:56+00:00",
+  "entry_game": "game/constraintsTutorial.range",
+  "requirements": {
+    "webgl": 2,
+    "threads": false,
+    "cross_origin_isolation": false
+  },
+  "touch_controls": {
+    "layout": "stick",
+    "stick": "dynamic"
+  },
+  "cardboard": false,
+  "microphone": false,
+  "runtime": {
+    "RangeRuntime.js": {
+      "bytes": 1055119,
+      "sha256": "69f2a2697bc5bd85815cf1fae01392ccd53e37a9806797f0a4a601e1ec3ef218"
+    },
+    "RangeRuntime.wasm": {
+      "bytes": 25353277,
+      "sha256": "e68b2771c4b6560771528be27be75b525700b9d81f4abe0d11cd90960576ab0d"
+    },
+    "RangeRuntime.data": {
+      "bytes": 43120077,
+      "sha256": "6703a7f0d3afa57d4522a3f78697fa903e23c32f6151e1a36ad797823b81491f"
+    }
+  },
+  "files": {
+    "game/constraintsTutorial.range": {
+      "bytes": 1931488,
+      "sha256": "8c880d9d7421f3b1ea6c099fd71556b2d709b77bbc3e6b1a42e1b2676d2c1dda"
+    },
+    "HOSTING.md": {
+      "bytes": 1822,
+      "sha256": "5b83383780c0f4ec8ad9efea5360a2478f8d42b3e91810a00e9a8fdc49ae1c5b"
+    },
+    "index.html": {
+      "bytes": 53630,
+      "sha256": "12967b035478635a716ccd4c8c870bd9b2ee0288f9c050e736898f48a2b511c3"
+    },
+    "RangeRuntime.data": {
+      "bytes": 43120077,
+      "sha256": "6703a7f0d3afa57d4522a3f78697fa903e23c32f6151e1a36ad797823b81491f"
+    },
+    "RangeRuntime.js": {
+      "bytes": 1055119,
+      "sha256": "69f2a2697bc5bd85815cf1fae01392ccd53e37a9806797f0a4a601e1ec3ef218"
+    },
+    "RangeRuntime.wasm": {
+      "bytes": 25353277,
+      "sha256": "e68b2771c4b6560771528be27be75b525700b9d81f4abe0d11cd90960576ab0d"
+    },
+    "serve.py": {
+      "bytes": 2418,
+      "sha256": "7bdb8f284b81a5ec7a412254227ebca821b9d6babe3d92701ad9c035a1e09d39"
+    }
+  },
+  "warnings": []
+}

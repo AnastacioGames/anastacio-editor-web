@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>player</title>
+<link rel="icon" href="data:,">
+<style>
+  html, body { margin: 0; height: 100%; background: #111; color: #ddd; font-family: system-ui, sans-serif; }
+  #stage { position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+  canvas { max-width: 100%; max-height: 100%; background: #000; outline: none; }
+  #overlay { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 14px;
+             align-items: center; justify-content: center; background: rgba(0,0,0,.85); text-align: center; padding: 16px; }
+  #overlay[hidden] { display: none; }
+  button { font-size: 18px; padding: 12px 32px; border: 0; border-radius: 6px; background: #e8862a; color: #111; cursor: pointer; }
+  button:disabled { background: #555; color: #999; cursor: default; }
+  progress { width: min(360px, 80vw); }
+  #gpu { font-size: 11px; opacity: .6; }
+  #error { color: #ff8a80; white-space: pre-wrap; max-width: 90vw; }
+  #log { display: none; position: fixed; left: 0; right: 0; bottom: 0; max-height: 35%; overflow: auto; margin: 0;
+         background: rgba(0,0,0,.8); color: #9f9; font: 11px monospace; padding: 6px; white-space: pre-wrap; }
+  body.debug #log { display: block; }
+  #fs { position: fixed; left: calc(8px + env(safe-area-inset-left, 0px)); top: calc(8px + env(safe-area-inset-top, 0px)); z-index: 10; font-size: 14px; padding: 8px 12px;
+        background: rgba(0,0,0,.5); color: #fff; border: 1px solid rgba(255,255,255,.35); }
+  #fs[hidden] { display: none; }
+  #touch-toggle { position: fixed; right: calc(8px + env(safe-area-inset-right, 0px));
+                  top: calc(8px + env(safe-area-inset-top, 0px)); z-index: 30;
+                  font-size: 14px; min-height: 44px; padding: 8px 12px; background: rgba(0,0,0,.5); color: #fff;
+                  border: 1px solid rgba(255,255,255,.35); touch-action: manipulation; }
+  #touch-toggle[hidden] { display: none; }
+  #touch { position: fixed; inset: 0; z-index: 20; pointer-events: none; --u: clamp(46px, 12vmin, 80px);
+           --sl: env(safe-area-inset-left, 0px); --sr: env(safe-area-inset-right, 0px);
+           --sb: env(safe-area-inset-bottom, 0px);
+           user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  #touch[hidden] { display: none; }
+  #touch .zone, #touch .btn, #touch .dpad { position: absolute; pointer-events: auto; touch-action: none; }
+  #touch .zone { bottom: 0; width: 45%; height: 70%; }
+  #touch .zone.left { left: 0; }
+  #touch .zone.right { right: 0; }
+  #touch .base { position: absolute; box-sizing: border-box; width: calc(var(--u) * 2); height: calc(var(--u) * 2);
+                 bottom: calc(var(--sb) + var(--u) * .8); border-radius: 50%;
+                 background: rgba(255,255,255,.12); border: 2px solid rgba(255,255,255,.4); }
+  #touch .left .base { left: calc(var(--sl) + var(--u) * .8); }
+  #touch .right .base { right: calc(var(--sr) + var(--u) * .8); }
+  #touch .knob { position: absolute; left: 50%; top: 50%; width: calc(var(--u) * .9); height: calc(var(--u) * .9);
+                 margin: calc(var(--u) * -.45) 0 0 calc(var(--u) * -.45); border-radius: 50%;
+                 background: rgba(255,255,255,.45); }
+  #touch .btn { box-sizing: border-box; width: calc(var(--u) * 1.1); height: calc(var(--u) * 1.1); border-radius: 50%;
+                display: flex; align-items: center; justify-content: center; font: bold 20px system-ui, sans-serif;
+                color: rgba(255,255,255,.85); background: rgba(255,255,255,.15); border: 2px solid rgba(255,255,255,.4); }
+  #touch .btn.small { width: calc(var(--u) * .7); height: calc(var(--u) * .7); font-size: 14px; }
+  #touch .btn.wide { width: calc(var(--u) * 1.5); height: calc(var(--u) * 1.5); font-size: 28px; }
+  #touch .dpad { box-sizing: border-box; width: calc(var(--u) * 2.4); height: calc(var(--u) * 2.4);
+                 left: calc(var(--sl) + var(--u) * .7); bottom: calc(var(--sb) + var(--u) * .7);
+                 border-radius: 50%; background: rgba(255,255,255,.06); }
+  #touch .dpad i { position: absolute; width: calc(var(--u) * .8); height: calc(var(--u) * .8); border-radius: 6px;
+                   background: rgba(255,255,255,.25); }
+  #touch .zone.on .knob, #touch .btn.on, #touch .dpad i.on { background: rgba(232,134,42,.7); }
+  #mic-note { position: fixed; left: 50%; top: calc(12px + env(safe-area-inset-top, 0px)); transform: translateX(-50%);
+    z-index: 20; padding: 10px 16px; border-radius: 10px; background: rgba(0,0,0,.75); color: #fff;
+    font: 15px system-ui, sans-serif; pointer-events: none; }
+  #mic-note[hidden] { display: none; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="canvas" tabindex="0" width="960" height="540" oncontextmenu="event.preventDefault()"></canvas>
+  <div id="overlay">
+    <h2 id="title">player</h2>
+    <progress id="progress" max="100" value="0"></progress>
+    <div id="status">Carregando...</div>
+    <button id="play" disabled>Jogar</button>
+    <button id="vr" disabled hidden>Entrar em VR</button>
+    <button id="reload" hidden>Recarregar pagina</button>
+    <div id="error" hidden></div>
+    <div id="gpu"></div>
+  </div>
+</div>
+<button id="fs" hidden>Tela cheia</button>
+<button id="touch-toggle" hidden aria-controls="touch" aria-pressed="true">Controles: ligados</button>
+<div id="touch" hidden></div>
+<div id="mic-note" hidden></div>
+<pre id="log"></pre>
+
+<script>
+(function () {
+  var GAME = "constraintsTutorial.range";
+  var EXTRAS = [];
+  var VERSION = "0";
+  var MICROPHONE = false;  // --microphone: aviso de permissao do microfone
+  var CARDBOARD = false;  // --cardboard: botao VR sempre visivel, sem controle de toque
+  var el = function (id) { return document.getElementById(id); };
+  var debug = /[?&]debug=1/.test(location.search);
+  // ?report=1: grava o Performance Report (GAME_TRACE) e manda ao serve.py do PC, que gera o report.html.
+  var report = /[?&]report=1/.test(location.search), REPORT_DIR = "/game_trace";
+  function sendReport() {
+    if (!report || !Module.FS) return;
+    var files = {};
+    ["trace.jsonl", "shaders.txt", "objects.txt"].forEach(function (n) {
+      try { files[n] = Module.FS.readFile(REPORT_DIR + "/" + n, { encoding: "utf8" }); } catch (e) {}
+    });
+    if (!files["trace.jsonl"]) return;
+    var body = JSON.stringify({ id: REPORT_ID, ua: navigator.userAgent, gpu: GPU, files: files });
+    fetch("__report", { method: "POST", body: body }).catch(function () {});
+  }
+  var REPORT_ID = new Date().toISOString().replace(/[:.]/g, "-");
+  if (report) {
+    setInterval(sendReport, 10000);
+    window.addEventListener("pagehide", sendReport);
+    document.addEventListener("visibilitychange", function () { if (document.hidden) sendReport(); });
+  }
+  if (debug) document.body.classList.add("debug");
+  function log(s) { if (debug) el("log").textContent += s + "\n"; }
+
+  // GPU que o navegador usa para o WebGL (notebook com 2 placas costuma cair na integrada).
+  var GPU = "";
+  try {
+    var g = document.createElement("canvas").getContext("webgl2"), gi = g && g.getExtension("WEBGL_debug_renderer_info");
+    if (g) GPU = String(g.getParameter(gi ? gi.UNMASKED_RENDERER_WEBGL : g.RENDERER));
+    if (g && g.getExtension("WEBGL_lose_context")) g.getExtension("WEBGL_lose_context").loseContext();
+  } catch (e) {}
+  if (GPU) { el("gpu").textContent = "GPU: " + GPU; log("[gpu] " + GPU); }
+
+  var failed = false;
+  function fail(msg) {
+    if (failed) return;
+    failed = true;
+    if (pf) pf.failure = String(msg);
+    el("progress").hidden = true;
+    el("play").hidden = true;
+    el("status").textContent = "Nao foi possivel iniciar o jogo.";
+    var e = el("error");
+    e.hidden = false;
+    e.textContent = msg + "\n\nRecarregue a pagina para tentar novamente. Use ?debug=1 para ver o log.";
+    el("overlay").hidden = false;
+    stopTouch();
+  }
+
+  function fetchInto(url, fsName) {
+    return (window.parent !== window && window.parent.__jogoEditor && fsName === GAME ? Promise.resolve(new Response(window.parent.__jogoEditor)) : fetch(url + "?v=" + encodeURIComponent(VERSION))).then(function (r) {
+      if (!r.ok) throw new Error(url + ": HTTP " + r.status);
+      return r.arrayBuffer();
+    }).then(function (buf) {
+      var parts = fsName.split("/"), dir = "/";
+      for (var i = 0; i < parts.length - 1; i++) {
+        try { Module.FS_createPath(dir, parts[i], true, true); } catch (e) {}
+        dir += parts[i] + "/";
+      }
+      Module.FS_createDataFile(dir, parts[parts.length - 1], new Uint8Array(buf), true, false);
+      log("[fs] /" + fsName + " (" + buf.byteLength + " bytes)");
+    });
+  }
+
+  var ready = false, started = false;
+  // "Entrar em VR": o mesmo que Jogar, mais tela cheia, paisagem travada e tela sempre acesa. A cena precisa ter
+  // Stereo Side-by-Side (e, para a cabeca seguir o celular, "VR Head Tracking"); o runtime centraliza a direcao
+  // "para frente" na primeira leitura do sensor.
+  var wakeLock = null;
+  function enterVR() {
+    if (started || !ready) return;
+    tryStart();
+    if (fsSupported && !isFullscreen()) toggleFullscreen();
+    else if (screen.orientation && screen.orientation.lock) screen.orientation.lock("landscape").catch(function () {});
+    if (navigator.wakeLock && navigator.wakeLock.request)
+      navigator.wakeLock.request("screen").then(function (l) { wakeLock = l; }).catch(function () {});
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (started && wakeLock && document.visibilityState === "visible" && navigator.wakeLock)
+      navigator.wakeLock.request("screen").then(function (l) { wakeLock = l; }).catch(function () {});
+  });
+  function tryStart() {
+    if (started || !ready) return;
+    started = true;
+    requestMotionPermission();
+    el("overlay").hidden = true;
+    el("fs").hidden = !fsSupported;
+    startTouch();
+    el("canvas").focus();
+  }
+
+  // Tela cheia: a pagina inteira (overlay de perf/log continuam visiveis). O canvas mantem a resolucao
+  // de desenho e so e escalado por CSS, preservando a proporcao (o mapeamento de toque/mouse segue certo).
+  // iPhone nao tem Fullscreen API para elementos fora de <video>: o botao fica oculto la. No APK Android
+  // (MainActivity acrescenta "RangeWebView/" ao user agent) a Activity ja e imersiva: botao oculto tambem.
+  var root = document.documentElement;
+  var inAndroidApp = /\bRangeWebView\//.test(navigator.userAgent);
+  var fsSupported = !inAndroidApp && !!(root.requestFullscreen || root.webkitRequestFullscreen);
+  // O WebView do Android nao tem pointer lock: o pedido do runtime (cursor oculto) rejeita com "UnknownError ...
+  // report this bug to chromium" e a pagina mostrava erro. No APK o pedido vira no-op; toque/arrasto seguem pelo
+  // cursor virtual do runtime, como sem pointer lock no navegador.
+  if (inAndroidApp && window.Element && Element.prototype.requestPointerLock)
+    Element.prototype.requestPointerLock = function () { return Promise.resolve(); };
+  function isFullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+  // Proporcao do jogo. O runtime cria a janela com a resolucao do .range (pode diferir de 960x540), e
+  // depois o SDL (janela redimensionavel) troca canvas.width/height pelo tamanho CSS a cada resize. Medir a proporcao
+  // por eles a cada vez deformava a imagem ao girar (achatada ou cortada). Aqui so vale uma troca de tamanho com
+  // proporcao diferente da do CSS atual, ou seja, pedida pelo jogo e nao pelo SDL acompanhando o CSS.
+  var canvasAspect = el("canvas").width / el("canvas").height;
+  if (window.MutationObserver) new MutationObserver(function () {
+    var c = el("canvas"), a = c.width / c.height, r = c.getBoundingClientRect();
+    if (!(a > 0) || Math.abs(a / canvasAspect - 1) < 0.01) return;
+    if (c.style.width && r.height > 0 && Math.abs(a / (r.width / r.height) - 1) < 0.01) return;
+    canvasAspect = a;
+    fitCanvas();
+  }).observe(el("canvas"), { attributes: true, attributeFilter: ["width", "height"] });
+  function fitCanvas() {
+    var c = el("canvas");
+    // No APK a pagina ja ocupa a tela toda: o canvas sempre se ajusta a ela, em paisagem ou retrato.
+    if (!isFullscreen() && !inAndroidApp) { c.style.width = c.style.height = ""; return; }
+    var w = Math.min(window.innerWidth, window.innerHeight * canvasAspect);
+    c.style.width = Math.floor(w) + "px";
+    c.style.height = Math.floor(w / canvasAspect) + "px";
+  }
+  function toggleFullscreen() {
+    if (isFullscreen()) {
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      return;
+    }
+    var req = root.requestFullscreen ? root.requestFullscreen() : root.webkitRequestFullscreen();
+    Promise.resolve(req).then(function () {
+      var c = el("canvas");
+      // Android/Chrome so permite travar a orientacao em tela cheia; falha em silencio nos demais.
+      if (c.width > c.height && screen.orientation && screen.orientation.lock)
+        return screen.orientation.lock("landscape");
+    }).catch(function () {});
+  }
+  function onFullscreenChange() {
+    el("fs").textContent = isFullscreen() ? "Sair da tela cheia" : "Tela cheia";
+    fitCanvas();
+    el("canvas").focus();
+  }
+  // Sensores de movimento -> bge.logic.motion (KX_PythonMotion.cpp le Module.rangeMotion).
+  // Os eixos do aparelho (x direita, y topo, z para fora da tela em retrato) sao girados para os da tela
+  // atual, para "inclinar a direita" continuar sendo +x em paisagem. Gravidade no sentido do W3C: aponta
+  // para cima (aparelho deitado de face para cima da z ~ +9.8).
+  var motion = { t: 0, gyro: [0, 0, 0], accel: [0, 0, 0], gravity: [0, 0, 0], orient: [0, 0, 0] };
+  var motionLogAt = 0;
+  var iosMotion = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+                  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  function screenAngle() {
+    var a = screen.orientation && typeof screen.orientation.angle === "number" ? screen.orientation.angle
+          : (typeof window.orientation === "number" ? window.orientation : 0);
+    return a * Math.PI / 180;
+  }
+  function toScreen(x, y, z) {
+    var a = screenAngle(), c = Math.cos(a), s = Math.sin(a);
+    return [x * c - y * s, x * s + y * c, z];
+  }
+  function onDeviceMotion(e) {
+    var g = e.accelerationIncludingGravity, r = e.rotationRate, lin = e.acceleration;
+    if (!g || g.x === null) return;
+    var accel = toScreen(g.x, g.y, g.z);
+    var grav;
+    if (lin && lin.x !== null) grav = toScreen(g.x - lin.x, g.y - lin.y, g.z - lin.z);
+    else {
+      // Sem aceleracao linear separada: passa-baixa sobre a leitura com gravidade.
+      grav = motion.t ? motion.gravity : accel.slice();
+      for (var i = 0; i < 3; i++) grav[i] += 0.1 * (accel[i] - grav[i]);
+    }
+    var d = Math.PI / 180;
+    // rotationRate em graus/s. Chrome/WebView preenchem alpha=x, beta=y, gamma=z (conferido com sensor
+    // emulado, verify-motion.cjs); Safari segue a especificacao (alpha=z, beta=x, gamma=y), nao testado.
+    var ra = r && r.alpha !== null ? [(r.alpha || 0) * d, (r.beta || 0) * d, (r.gamma || 0) * d] : null;
+    motion.gyro = !ra ? [0, 0, 0] : iosMotion ? toScreen(ra[1], ra[2], ra[0]) : toScreen(ra[0], ra[1], ra[2]);
+    motion.accel = accel;
+    motion.gravity = grav;
+    motion.t = performance.now();
+    if (ra) fuseHead(motion.gyro, motion.gravity);
+    touchTilt();
+    if (debug && motion.t - motionLogAt > 1000) {
+      motionLogAt = motion.t;
+      log("[motion] accel " + accel.map(function (v) { return v.toFixed(2); }).join(" ") +
+          " | gyro " + motion.gyro.map(function (v) { return v.toFixed(2); }).join(" ") +
+          " | orient " + motion.orient.map(function (v) { return v.toFixed(0); }).join(" "));
+    }
+  }
+  function qmul(a, b) {
+    return [a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3],
+            a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+            a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],
+            a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0]];
+  }
+  function screenQuat() {
+    var sc = -screenAngle() * Math.PI / 360;
+    return [Math.cos(sc), 0, 0, Math.sin(sc)];
+  }
+  // Pose da cabeca por fusao giroscopio + gravidade (filtro complementar), nos eixos da tela (= da camera).
+  // O Euler do deviceorientation e o AbsoluteOrientationSensor do Android saltam perto de olhar para cima; a
+  // integracao do giroscopio nao tem esse ponto. O yaw so vem do giroscopio (deriva devagar; recenter() corrige).
+  var fusion = null, fusionAt = 0;
+  function fuseHead(gyro, up) {
+    var now = performance.now(), n = Math.sqrt(up[0] * up[0] + up[1] * up[1] + up[2] * up[2]);
+    if (n < 1) return;
+    var u = [up[0] / n, up[1] / n, up[2] / n];
+    if (!fusion) {
+      // menor arco de u (na camera) ate o +z do mundo: so o yaw fica arbitrario
+      var w = 1 + u[2], q0 = w < 1e-6 ? [0, 1, 0, 0] : [w, u[1], -u[0], 0];
+      var l = Math.sqrt(q0[0] * q0[0] + q0[1] * q0[1] + q0[2] * q0[2] + q0[3] * q0[3]);
+      fusion = [q0[0] / l, q0[1] / l, q0[2] / l, q0[3] / l];
+      fusionAt = now;
+      motion.quat = fusion.slice();
+      return;
+    }
+    var dt = Math.min(0.1, Math.max(0, (now - fusionAt) / 1000));
+    fusionAt = now;
+    var q = fusion;
+    // "cima" do mundo visto da camera: q^-1 * (0,0,1)
+    var ex = 2 * (q[1] * q[3] - q[0] * q[2]), ey = 2 * (q[2] * q[3] + q[0] * q[1]), ez = 1 - 2 * (q[1] * q[1] + q[2] * q[2]);
+    var k = 2.0; // ganho da correcao pela gravidade (1/s)
+    var wx = gyro[0] + k * (ez * u[1] - ey * u[2]);
+    var wy = gyro[1] + k * (ex * u[2] - ez * u[0]);
+    var wz = gyro[2] + k * (ey * u[0] - ex * u[1]);
+    var ang = Math.sqrt(wx * wx + wy * wy + wz * wz) * dt, h = ang / 2;
+    var sn = ang > 1e-9 ? Math.sin(h) / (ang / dt) : 0;
+    var dq = [Math.cos(h), wx * sn, wy * sn, wz * sn];
+    q = qmul(q, dq);
+    var m = Math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+    fusion = [q[0] / m, q[1] / m, q[2] / m, q[3] / m];
+    motion.quat = fusion.slice();
+  }
+  function onDeviceOrientation(e) {
+    if (e.alpha === null && e.beta === null) return;
+    motion.orient = [e.alpha || 0, e.beta || 0, e.gamma || 0];
+    if (fusion) return;
+    // Pose da cabeca para VR (bge.logic.motion.headOrientation): W3C R = Rz(alpha)*Rx(beta)*Ry(gamma) leva o
+    // aparelho ao mundo (x leste, y norte, z cima, igual ao Blender), e os eixos do aparelho ja sao os da camera
+    // do Blender (x direita, y cima, olha para -z). Rz(-angulo da tela) segue a tela em paisagem. [w, x, y, z]
+    var d = Math.PI / 360;
+    var al = (e.alpha || 0) * d, be = (e.beta || 0) * d, ga = (e.gamma || 0) * d;
+    motion.quat = qmul(qmul(qmul([Math.cos(al), 0, 0, Math.sin(al)], [Math.cos(be), Math.sin(be), 0, 0]),
+                            [Math.cos(ga), 0, Math.sin(ga), 0]), screenQuat());
+  }
+  window.addEventListener("devicemotion", onDeviceMotion);
+  window.addEventListener("deviceorientation", onDeviceOrientation);
+  // iOS so entrega os eventos depois de permissao pedida num gesto do usuario (o clique em Jogar).
+  function requestMotionPermission() {
+    [window.DeviceMotionEvent, window.DeviceOrientationEvent].forEach(function (E) {
+      if (E && typeof E.requestPermission === "function")
+        E.requestPermission().catch(function (e) { console.warn("[web] sensores recusados: " + e); });
+    });
+  }
+
+  // Controle na tela -> gamepad 0 do runtime (DEV_JoystickEvents.cpp le Module.rangePad a cada quadro).
+  // axes na ordem do SDL GameController (LX, LY, RX, RY, gatilho E, gatilho D; -1..1, gatilhos 0..1);
+  // buttons e mascara de bits na ordem de SDL_GameControllerButton (A=1, B=2, X=4, Y=8, ...).
+  // keys: teclas e botoes do mouse segurados pelo toque, em codigos de bge.events (DEV_InputDevice.cpp os junta aos
+  // fisicos). look: quanto o stick de olhar girou desde o ultimo quadro, em fracoes da janela; GHOST_SystemSDL.cpp o
+  // consome e move o cursor virtual como um arrastar de dedo (jogos com mouse-look giram sem mudanca).
+  var pad = { active: false, axes: [0, 0, 0, 0, 0, 0], buttons: 0, keys: [], look: [0, 0] };
+
+  // Overlay do controle na tela: cada controle segue um dedo (pointerId), entao mover e apertar ao mesmo tempo
+  // funciona. Toques fora dos controles seguem para o canvas (arrastar para olhar continua). Aparece em tela de
+  // toque (pointer: coarse) ou com ?touch=1; ?touch=0 esconde; ?touchlayout= e ?touchstick= trocam a config.
+  var TOUCH = {"layout": "stick", "stick": "dynamic"};
+  var DPAD_UP = 1 << 11, DPAD_DOWN = 1 << 12, DPAD_LEFT = 1 << 13, DPAD_RIGHT = 1 << 14;
+  var STICK_DEADZONE = 0.1;
+  var touchLayouts = {
+    stick: [{ type: "stick", side: "left", axes: [0, 1] },
+            { type: "button", bit: 0, label: "A", at: [-0.75, 0.55] },
+            { type: "button", bit: 1, label: "B", at: [0.75, -0.55] }],
+    dpad: [{ type: "dpad" },
+           { type: "button", bit: 0, label: "A", at: [0, 1] }, { type: "button", bit: 1, label: "B", at: [1, 0] },
+           { type: "button", bit: 2, label: "X", at: [-1, 0] }, { type: "button", bit: 3, label: "Y", at: [0, -1] }],
+    twin: [{ type: "stick", side: "left", axes: [0, 1] }, { type: "stick", side: "right", axes: [2, 3] }],
+    // Alvo tecla (jogos que leem teclado): keys = [cima, baixo, esquerda, direita]; key = tecla do botao.
+    wasd: [{ type: "stick", side: "left", keys: ["WKEY", "SKEY", "AKEY", "DKEY"] },
+           { type: "button", key: "SPACEKEY", label: "\u2423", at: [0, 0] }],
+    arrows: [{ type: "dpad", keys: ["UPARROWKEY", "DOWNARROWKEY", "LEFTARROWKEY", "RIGHTARROWKEY"] },
+             { type: "button", key: "SPACEKEY", label: "\u2423", at: [-0.75, 0.55] },
+             { type: "button", key: "RETKEY", label: "\u23ce", at: [0.75, -0.55] }],
+    // Primeira pessoa com teclado e mouse: stick direito move o mouse (olhar em volta); pulo e clique acima dele.
+    fps: [{ type: "stick", side: "left", keys: ["WKEY", "SKEY", "AKEY", "DKEY"] },
+          { type: "stick", side: "right", look: 1.5 },
+          { type: "button", key: "SPACEKEY", label: "\u2423", at: [0.3, -2] },
+          { type: "button", key: "LEFTMOUSE", label: "\u25ce", at: [-2, -1.4] }]
+  };
+  // Corrida (gamepad 0): direcao no eixo X do stick esquerdo, pedais nos gatilhos (axis 5 acelera, 4 freia), A/B/X/Y,
+  // START (bit 6) e RB (bit 10) pequenos no topo. O botao "switch" troca o jeito de virar - stick, setas ou inclinar
+  // o aparelho - e a escolha fica guardada no aparelho. O jogo le sempre o mesmo gamepad.
+  var raceButtons = [
+    { type: "button", axis: 5, label: "\u25b2", size: "wide", at: [0.55, 0.35] },
+    { type: "button", axis: 4, label: "\u25bc", at: [-1.1, 0.55] },
+    { type: "button", bit: 3, label: "Y", at: [0.75, -1.3] }, { type: "button", bit: 0, label: "A", at: [-0.6, -0.9] },
+    { type: "button", bit: 1, label: "B", at: [-2.3, 0.55] }, { type: "button", bit: 2, label: "X", at: [-1.9, -0.9] },
+    { type: "button", bit: 6, label: "II", size: "small", top: true, at: [0.9, 0.9] },
+    { type: "button", bit: 10, label: "\u25a3", size: "small", top: true, at: [-0.1, 0.9] },
+    { type: "switch", layouts: ["race", "race_arrows", "race_tilt"], labels: ["\u25ce", "\u25c4\u25ba", "\u27f3"],
+      size: "small", top: true, at: [-1.1, 0.9] }];
+  touchLayouts.race = [{ type: "stick", side: "left", axes: [0, 1] }].concat(raceButtons);
+  touchLayouts.race_arrows = [
+    { type: "button", axis: 0, value: -1, label: "\u25c4", size: "wide", left: true, at: [-0.9, 0.35] },
+    { type: "button", axis: 0, value: 1, label: "\u25ba", size: "wide", left: true, at: [0.9, 0.35] }].concat(raceButtons);
+  touchLayouts.race_tilt = [{ type: "tilt", axis: 0, full: 0.5 }].concat(raceButtons);
+  // Ordem de SCA_IInputDevice::SCA_EnumInputs a partir de RETKEY (= 7), a mesma de bge.events. So as teclas
+  // que fazem sentido num controle na tela; verify-touch.cjs confere W, SPACE e UPARROW com o bge.events.
+  var KEY_NAMES = ("RET SPACE PADASTER COMMA MINUS PERIOD ZERO ONE TWO THREE FOUR FIVE SIX SEVEN EIGHT NINE " +
+    "A B C D E F G H I J K L M N O P Q R S T U V W X Y Z CAPSLOCK LEFTCTRL LEFTALT RIGHTALT RIGHTCTRL RIGHTSHIFT " +
+    "LEFTSHIFT ESC TAB LINEFEED BACKSPACE DEL SEMICOLON QUOTE ACCENTGRAVE SLASH BACKSLASH EQUAL LEFTBRACKET " +
+    "RIGHTBRACKET LEFTARROW DOWNARROW RIGHTARROW UPARROW").split(" ");
+  // Botoes do mouse (SCA_EnumInputs, os de bge.events), para jogos que atiram no clique.
+  var MOUSE_CODES = { LEFTMOUSE: 116, MIDDLEMOUSE: 117, RIGHTMOUSE: 118 };
+  function keyCode(name) {
+    var mouse = MOUSE_CODES[String(name).toUpperCase()];
+    if (mouse) return mouse;
+    var i = KEY_NAMES.indexOf(String(name).toUpperCase().replace(/KEY$/, ""));
+    if (i < 0) { log("[touch] tecla desconhecida: " + name); return 0; }
+    return 7 + i;
+  }
+  // Direcao digital de um stick/d-pad no alvo tecla: codes = [cima, baixo, esquerda, direita].
+  function heldKeys(codes, up, down, left, right) {
+    var held = [];
+    if (up) held.push(codes[0]);
+    if (down) held.push(codes[1]);
+    if (left) held.push(codes[2]);
+    if (right) held.push(codes[3]);
+    return held;
+  }
+  var touchControls = [], touchLogAt = 0, touchLogButtons = "", activeTouchLayout = null;
+  function touchParam(name) {
+    var m = new RegExp("[?&]" + name + "=(\\w+)").exec(location.search);
+    return m ? m[1] : null;
+  }
+  function node(tag, cls, text) {
+    var n = document.createElement(tag);
+    n.className = cls;
+    if (text) n.textContent = text;
+    return n;
+  }
+  function updatePad() {
+    var axes = [0, 0, 0, 0, 0, 0], bits = 0, keys = [];
+    touchControls.forEach(function (c) {
+      if (c.axes) { axes[c.axes[0]] = c.value[0]; axes[c.axes[1]] = c.value[1]; }
+      // Botao ou sensor num eixo so (gatilho, seta de direcao, inclinar): soma, para duas setas se anularem.
+      if (c.axis != null) axes[c.axis] = Math.max(-1, Math.min(1, axes[c.axis] + c.amount));
+      bits |= c.bits;
+      keys = keys.concat(c.held);
+    });
+    pad.axes = axes;
+    pad.buttons = bits;
+    pad.keys = keys;
+    var now = performance.now();
+    if (debug && (bits + ":" + keys !== touchLogButtons || now - touchLogAt > 250)) {
+      touchLogAt = now;
+      touchLogButtons = bits + ":" + keys;
+      log("[touch] axes " + axes.map(function (v) { return v.toFixed(2); }).join(" ") + " | buttons " + bits +
+          " | keys " + keys.join(","));
+    }
+  }
+  // Um dedo por controle, preso a ele por pointer capture: arrastar para fora nao solta nem pega outro controle.
+  function bindPointer(target, ctl, down, move) {
+    var id = null;
+    function end(e) {
+      if (e.pointerId !== id) return;
+      id = null;
+      ctl.reset();
+      updatePad();
+    }
+    target.addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      if (id !== null) return;
+      id = e.pointerId;
+      try { target.setPointerCapture(id); } catch (x) {}
+      down(e);
+      updatePad();
+    });
+    target.addEventListener("pointermove", function (e) {
+      if (e.pointerId !== id) return;
+      move(e);
+      updatePad();
+    });
+    target.addEventListener("pointerup", end);
+    target.addEventListener("pointercancel", end);
+    target.addEventListener("lostpointercapture", end);
+    ctl.release = function () {
+      var was = id;
+      id = null;
+      if (was !== null) try { target.releasePointerCapture(was); } catch (x) {}
+      ctl.reset();
+    };
+  }
+  // Stick fixo: o centro e a posicao de repouso. Dinamico: a base vai para onde o dedo tocou dentro da zona.
+  // Alvos: axes (gamepad 0), keys (quatro teclas) ou look (mouse; o numero e o giro em janelas por segundo).
+  function makeStick(c, dynamic) {
+    var zone = node("div", "zone " + c.side), base = node("div", "base"), knob = node("div", "knob");
+    base.appendChild(knob);
+    zone.appendChild(base);
+    var codes = c.keys ? c.keys.map(keyCode) : null;
+    var ctl = { node: zone, axes: codes || c.look ? null : c.axes, look: +c.look || 0, value: [0, 0], bits: 0,
+                held: [] }, cx = 0, cy = 0, r = 1;
+    function aim(e) {
+      var dx = e.clientX - cx, dy = e.clientY - cy, len = Math.sqrt(dx * dx + dy * dy);
+      if (len > r) { dx *= r / len; dy *= r / len; }
+      knob.style.transform = "translate(" + dx + "px," + dy + "px)";
+      var n = Math.min(1, len / r);
+      var k = n <= STICK_DEADZONE ? 0 : (n - STICK_DEADZONE) / (1 - STICK_DEADZONE) / n;
+      ctl.value = [dx / r * k, dy / r * k];
+      // Alvo tecla: cada eixo vira tecla depois de meio curso (diagonal aperta as duas).
+      if (codes) ctl.held = heldKeys(codes, ctl.value[1] < -0.5, ctl.value[1] > 0.5, ctl.value[0] < -0.5, ctl.value[0] > 0.5);
+    }
+    ctl.reset = function () {
+      ctl.value = [0, 0];
+      ctl.held = [];
+      knob.style.transform = "";
+      base.removeAttribute("style");
+      zone.classList.remove("on");
+    };
+    bindPointer(zone, ctl, function (e) {
+      var b = base.getBoundingClientRect();
+      r = b.width / 2;
+      if (dynamic) {
+        var z = zone.getBoundingClientRect();
+        var x = Math.max(r, Math.min(z.width - r, e.clientX - z.left));
+        var y = Math.max(r, Math.min(z.height - r, e.clientY - z.top));
+        base.style.left = x - r + "px";
+        base.style.top = y - r + "px";
+        base.style.right = base.style.bottom = "auto";
+        cx = z.left + x;
+        cy = z.top + y;
+      } else {
+        cx = b.left + r;
+        cy = b.top + r;
+      }
+      zone.classList.add("on");
+      aim(e);
+    }, aim);
+    return ctl;
+  }
+  // D-pad de 8 direcoes pelo angulo do dedo em relacao ao centro (diagonal aperta os dois botoes).
+  function makeDpad(c) {
+    var box = node("div", "dpad"), arms = {};
+    [["up", DPAD_UP, 0.8, 0], ["down", DPAD_DOWN, 0.8, 1.6], ["left", DPAD_LEFT, 0, 0.8], ["right", DPAD_RIGHT, 1.6, 0.8]]
+      .forEach(function (a) {
+        var i = node("i", "");
+        i.style.left = "calc(var(--u) * " + a[2] + ")";
+        i.style.top = "calc(var(--u) * " + a[3] + ")";
+        box.appendChild(i);
+        arms[a[1]] = i;
+      });
+    var codes = c.keys ? c.keys.map(keyCode) : null;
+    var ctl = { node: box, value: null, bits: 0, held: [] };
+    function aim(e) {
+      var b = box.getBoundingClientRect(), r = b.width / 2;
+      var dx = (e.clientX - b.left - r) / r, dy = (e.clientY - b.top - r) / r, len = Math.sqrt(dx * dx + dy * dy);
+      var bits = 0;
+      if (len > 0.2) {
+        dx /= len;
+        dy /= len;
+        if (dy < -0.38) bits |= DPAD_UP;
+        if (dy > 0.38) bits |= DPAD_DOWN;
+        if (dx < -0.38) bits |= DPAD_LEFT;
+        if (dx > 0.38) bits |= DPAD_RIGHT;
+      }
+      ctl.bits = codes ? 0 : bits;
+      ctl.held = codes ? heldKeys(codes, bits & DPAD_UP, bits & DPAD_DOWN, bits & DPAD_LEFT, bits & DPAD_RIGHT) : [];
+      for (var k in arms) arms[k].classList.toggle("on", !!(bits & k));
+    }
+    ctl.reset = function () { aim({ clientX: NaN, clientY: NaN }); };
+    bindPointer(box, ctl, aim, aim);
+    return ctl;
+  }
+  // Botoes em volta de um centro no canto inferior direito; "at" em unidades de --u (x para a direita, y para baixo).
+  // left: centro no canto inferior esquerdo; top: no canto de cima. Alvos: key (tecla), bit (botao do gamepad) ou
+  // axis (eixo do gamepad, com value; gatilho = 1).
+  function placeButton(b, c) {
+    if (c.size) b.classList.add(c.size);
+    if (c.left) b.style.left = "calc(var(--sl) + var(--u) * " + (1.35 + c.at[0]) + ")";
+    else b.style.right = "calc(var(--sr) + var(--u) * " + (1.35 - c.at[0]) + ")";
+    // Abaixo do botao "Controles" (#touch-toggle, 44px + 8px no canto superior direito) e do notch.
+    if (c.top) b.style.top = "calc(env(safe-area-inset-top, 0px) + 56px + var(--u) * " + (c.at[1] - 0.6) + ")";
+    else b.style.bottom = "calc(var(--sb) + var(--u) * " + (1.35 - c.at[1]) + ")";
+  }
+  function makeButton(c) {
+    var code = c.key ? keyCode(c.key) : 0;
+    var b = node("div", "btn", c.label || String(c.key || "").replace(/KEY$/, ""));
+    var ctl = { node: b, value: null, bits: 0, held: [], axis: c.axis, amount: 0 };
+    placeButton(b, c);
+    ctl.reset = function () { ctl.bits = 0; ctl.held = []; ctl.amount = 0; b.classList.remove("on"); };
+    bindPointer(b, ctl, function () {
+      if (code) ctl.held = [code];
+      else if (c.axis != null) ctl.amount = c.value || 1;
+      else ctl.bits = 1 << c.bit;
+      b.classList.add("on");
+    }, function () {});
+    return ctl;
+  }
+  // Inclinar o aparelho como eixo: a gravidade aponta para cima (W3C), entao abaixar a borda direita da x negativo.
+  // full: seno da inclinacao que da o curso todo (0.5 = 30 graus). Sem sensor o eixo fica em zero.
+  function makeTilt(c) {
+    var ctl = { node: node("div", ""), value: null, bits: 0, held: [], axis: c.axis, amount: 0 };
+    ctl.poll = function () {
+      var g = motion.gravity, len = Math.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]);
+      var v = motion.t && len > 1 ? -g[0] / len / (c.full || 0.5) : 0;
+      ctl.amount = Math.abs(v) < 0.08 ? 0 : Math.max(-1, Math.min(1, v));
+    };
+    ctl.reset = function () { ctl.amount = 0; };
+    ctl.release = ctl.reset;
+    return ctl;
+  }
+  function touchTilt() {
+    var moved = false;
+    touchControls.forEach(function (c) { if (c.poll) { c.poll(); moved = true; } });
+    if (moved) updatePad();
+  }
+  // Botao que troca o layout inteiro pelo proximo da lista e guarda a escolha (localStorage) para a proxima visita.
+  var TOUCH_SAVED = "rangeTouchLayout";
+  function makeSwitch(c, current) {
+    var at = Math.max(0, c.layouts.indexOf(current));
+    var b = node("div", "btn", (c.labels || [])[at] || "\u21c4");
+    var ctl = { node: b, value: null, bits: 0, held: [] };
+    placeButton(b, c);
+    ctl.reset = function () {};
+    ctl.release = ctl.reset;
+    b.addEventListener("pointerup", function (e) {
+      e.preventDefault();
+      var next = c.layouts[(at + 1) % c.layouts.length];
+      try { localStorage.setItem(TOUCH_SAVED, next); } catch (x) {}
+      if (next.indexOf("tilt") >= 0) requestMotionPermission();
+      clearTouch();
+      buildTouch(next);
+    });
+    return ctl;
+  }
+  function startTouch() {
+    var show = touchParam("touch");
+    // TOUCH.layout: nome de um layout pronto ou a lista de controles (config do projeto, T3).
+    var chosen = touchParam("touchlayout") || TOUCH.layout;
+    var layout = Array.isArray(chosen) ? chosen : touchLayouts[chosen];
+    var coarse = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+    if (!layout || show === "0" || (show !== "1" && !coarse) || touchControls.length) return;
+    // Escolha guardada pelo botao de troca: vale se o layout do projeto a oferece.
+    var saved = null;
+    try { saved = localStorage.getItem(TOUCH_SAVED); } catch (x) {}
+    if (!touchParam("touchlayout") &&
+        layout.some(function (c) { return c.type === "switch" && c.layouts.indexOf(saved) >= 0; })) chosen = saved;
+    buildTouch(chosen);
+  }
+  function clearTouch() {
+    releaseTouch();
+    cancelAnimationFrame(lookRequest);
+    lookRequest = null;
+    lookAt = 0;
+    pad.look = [0, 0];
+    touchControls.forEach(function (c) { if (c.node.parentNode) c.node.parentNode.removeChild(c.node); });
+    touchControls = [];
+  }
+  function buildTouch(chosen) {
+    activeTouchLayout = chosen;
+    var layout = Array.isArray(chosen) ? chosen : touchLayouts[chosen];
+    var dynamic = (touchParam("touchstick") || TOUCH.stick) !== "fixed";
+    layout.forEach(function (c) {
+      var ctl = c.type === "stick" ? makeStick(c, dynamic) : c.type === "dpad" ? makeDpad(c) :
+                c.type === "tilt" ? makeTilt(c) : c.type === "switch" ? makeSwitch(c, chosen) : makeButton(c);
+      touchControls.push(ctl);
+      el("touch").appendChild(ctl.node);
+    });
+    el("touch").hidden = false;
+    pad.active = true;
+    syncTouchToggle();
+    if (touchControls.some(function (c) { return c.look; })) lookRequest = requestAnimationFrame(lookFrame);
+    log("[touch] controle na tela: " + (Array.isArray(chosen) ? "personalizado" : chosen) +
+        (dynamic ? " (stick dinamico)" : ""));
+  }
+  // Stick de olhar: acumula o giro a cada quadro da pagina; o runtime zera pad.look ao consumir. Curva quadratica:
+  // pouco desvio mira fino, desvio todo gira rapido.
+  var lookAt = 0, lookRequest = null;
+  function lookFrame(now) {
+    var dt = lookAt ? Math.min(0.1, (now - lookAt) / 1000) : 0;
+    lookAt = now;
+    touchControls.forEach(function (c) {
+      if (!c.look) return;
+      pad.look[0] += c.value[0] * Math.abs(c.value[0]) * c.look * dt;
+      pad.look[1] += c.value[1] * Math.abs(c.value[1]) * c.look * dt;
+    });
+    if (pad.active) lookRequest = requestAnimationFrame(lookFrame);
+    else lookAt = 0;
+  }
+  // Soltar tudo quando a pagina perde o foco ou some: sem isso um dedo "preso" seguia andando ao voltar.
+  function releaseTouch() {
+    if (!touchControls.length) return;
+    touchControls.forEach(function (c) { c.release(); });
+    updatePad();
+  }
+  function stopTouch() {
+    clearTouch();
+    pad.active = false;
+    el("touch").hidden = true;
+    syncTouchToggle();
+  }
+  function syncTouchToggle() {
+    var b = el("touch-toggle");
+    b.hidden = activeTouchLayout === null || failed;
+    b.textContent = pad.active ? "Controles: ligados" : "Controles: desligados";
+    b.setAttribute("aria-pressed", String(pad.active));
+  }
+  el("touch-toggle").addEventListener("click", function () {
+    if (pad.active) stopTouch();
+    else if (activeTouchLayout !== null && !failed) buildTouch(activeTouchLayout);
+    el("canvas").focus();
+  });
+  window.addEventListener("blur", releaseTouch);
+  window.addEventListener("pagehide", releaseTouch);
+  window.addEventListener("orientationchange", releaseTouch);
+  document.addEventListener("visibilitychange", function () { if (document.hidden) releaseTouch(); });
+
+  // Audio: com a pagina escondida (app em segundo plano, outra aba) o jogo para, mas o Web Audio seguia
+  // tocando a musica. Suspende o contexto ao esconder e retoma ao voltar (so o que esta pagina suspendeu).
+  // Module.rangeAudio e a saida AudioWorklet (plugins/webaudio); Module.SDL2 e o fallback ScriptProcessor.
+  var audioHeld = false;
+  function syncAudio() {
+    var M = window.Module, ctx = M && ((M.rangeAudio && M.rangeAudio.ctx) || (M.SDL2 && M.SDL2.audioContext));
+    if (!ctx) return;
+    if (!ctx.rangeWatched) {
+      ctx.rangeWatched = true;
+      // O SDL chama resume() sozinho enquanto espera o primeiro gesto; escondido, volta a suspender.
+      ctx.addEventListener("statechange", function () { if ((document.hidden || appHidden) && audioHeld) syncAudio(); });
+    }
+    if (document.hidden || appHidden) {
+      if (ctx.state === "running") {
+        audioHeld = true;
+        ctx.suspend();
+        log("[event] audio suspenso (pagina escondida)");
+      }
+    } else if (audioHeld) {
+      audioHeld = false;
+      ctx.resume();
+      log("[event] audio retomado");
+    }
+  }
+  document.addEventListener("visibilitychange", syncAudio);
+  // O app Android (WebView) nem sempre dispara visibilitychange no onPause; ele avisa por aqui.
+  var appHidden = false;
+  window.rangeAppHidden = function (hidden) { appHidden = !!hidden; syncAudio(); };
+
+  // Microfone (plugins/webaudio/WebMicrophone.cpp, Module.rangeMic): pendente por mais de 1 s pede um
+  // toque (o AudioContext so roda depois de um gesto); negado explica onde liberar. ?micnote=0 desliga.
+  if (MICROPHONE && !/[?&]micnote=0/.test(location.search)) {
+    var micSince = 0;
+    setInterval(function () {
+      var M = window.Module && window.Module.rangeMic, note = el("mic-note"), text = "";
+      if (M && !M.closed) {
+        var ctx = window.Module.rangeAudio && window.Module.rangeAudio.ctx;
+        var pending = M.state === 1 || (M.state === 2 && ctx && ctx.state !== "running");
+        if (pending) {
+          micSince = micSince || Date.now();
+          if (Date.now() - micSince > 1000) text = "\uD83C\uDFA4 Toque para ativar o microfone";
+        }
+        else micSince = 0;
+        if (M.state === 3) text = "Microfone bloqueado: libere nas configura\u00e7\u00f5es";
+      } else micSince = 0;
+      if (note.textContent !== text) note.textContent = text;
+      note.hidden = !text;
+    }, 250);
+  }
+
+  el("fs").addEventListener("click", toggleFullscreen);
+  document.addEventListener("fullscreenchange", onFullscreenChange);
+  document.addEventListener("webkitfullscreenchange", onFullscreenChange);
+  window.addEventListener("resize", fitCanvas);
+  if (inAndroidApp) fitCanvas();
+
+  // Alguns avisos da emulacao GL saem direto por console.error (antes do printErr).
+  var _consoleError = console.error.bind(console);
+  console.error = function () {
+    var t = arguments.length ? String(arguments[0]) : "";
+    if (/using emscripten GL (immediate mode )?emulation/.test(t)) console.warn.apply(console, arguments);
+    else _consoleError.apply(null, arguments);
+  };
+
+  window.Module = {
+    canvas: el("canvas"),
+    arguments: ["-g", "show_framerate", "=", "0", "-g", "show_profile", "=", "0", "-g", "show_properties", "=", "0", "-g", "show_render_queries", "=", "0"].concat([GAME]),
+    rangeMotion: motion,
+    rangePad: pad,
+    print: function (t) { log("[out] " + t); console.log(t); },
+    printErr: function (t) {
+      log("[err] " + t);
+      // Avisos conhecidos e inofensivos da emulacao GL legada do emscripten.
+      if (/using emscripten GL (immediate mode )?emulation/.test(t)) console.warn(t); else console.error(t);
+    },
+    onAbort: function (w) {
+      if (pf) pf.runtimeAborted = String(w);
+      fail("O runtime foi interrompido: " + w);
+    },
+    setStatus: function (t) {
+      if (failed) return;
+      var m = /(.+) \((\d+(?:\.\d+)?)\/(\d+)\)/.exec(t);
+      if (m) { el("progress").value = 100 * m[2] / m[3]; el("status").textContent = "Baixando dados do jogo..."; }
+      else if (t) el("status").textContent = t;
+    },
+    preRun: [function () {
+      if (report && window.ENV) {
+        try { Module.FS.mkdirTree(REPORT_DIR); } catch (e) {}
+        ENV.GAME_TRACE = REPORT_DIR;
+        ENV.GAME_TRACE_MODULES = "load,usage,frames,work,scripts,runtime";
+        ENV.RANGE_SHADER_LOG = REPORT_DIR + "/shaders.txt";
+      }
+      Module.addRunDependency("game-files");
+      var jobs = [fetchInto("game/" + GAME, GAME)];
+      EXTRAS.forEach(function (n) {
+        jobs.push(fetchInto("game/" + n.split("/").map(encodeURIComponent).join("/"), n));
+      });
+      Promise.all(jobs).then(function () {
+        Module.removeRunDependency("game-files");
+      }).catch(function (e) { fail("Falha ao baixar arquivos do jogo: " + e.message); });
+    }],
+    // Quit Game do jogo: no APK fecha a Activity; no navegador a pagina nao pode se fechar, entao avisa.
+    onRangeQuit: function () {
+      log("[event] jogo encerrado (Quit Game)");
+      sendReport();
+      if (window.RangeAndroid && window.RangeAndroid.exit) { window.RangeAndroid.exit(); return; }
+      el("progress").hidden = true;
+      el("play").hidden = true;
+      el("vr").hidden = true;
+      el("reload").hidden = false;
+      el("status").textContent = "Jogo encerrado.";
+      el("overlay").hidden = false;
+      stopTouch();
+      // O runtime parou, mas o Web Audio seguia tocando o ultimo som (ex.: chuva em loop).
+      var M = window.Module, ctx = M && ((M.rangeAudio && M.rangeAudio.ctx) || (M.SDL2 && M.SDL2.audioContext));
+      if (ctx && ctx.state !== "closed") ctx.close().catch(function () {});
+    },
+    onRuntimeInitialized: function () {
+      if (pf) pf.runtimeInitialized = true;
+      log("[event] runtime inicializado");
+      markReady();
+    }
+  };
+
+  window.addEventListener("error", function (ev) { fail("Erro: " + ev.message); });
+  window.addEventListener("unhandledrejection", function (ev) {
+    var msg = ev.reason && ev.reason.message ? ev.reason.message : String(ev.reason);
+    // Pedido de pointer lock recusado (Esc recente, iframe, navegador sem suporte): o jogo segue sem trava.
+    if (/pointer ?lock|exited the lock/i.test(msg)) { ev.preventDefault(); console.warn("[web] pointer lock recusado: " + msg); return; }
+    fail("Erro: " + msg);
+  });
+
+  // O jogo so comeca a ser mostrado apos um clique: libera foco de teclado e permite audio (politica de autoplay).
+  var script = document.createElement("script");
+  script.src = "RangeRuntime.js?v=" + encodeURIComponent(VERSION);
+  script.onerror = function () { fail("RangeRuntime.js nao foi encontrado no servidor."); };
+  // Liberar o botao so quando o runtime terminou de inicializar (onRuntimeInitialized): com rede lenta o
+  // script carrega antes do .data/.wasm e o botao ficava ativo cedo demais (achado no GitHub Pages).
+  function markReady() {
+    if (failed || ready) return;
+    ready = true;
+    el("progress").hidden = true;
+    el("status").textContent = "Pronto.";
+    el("play").disabled = false;
+    // Visor so faz sentido em aparelho de toque (ou com ?vr=1).
+    if (CARDBOARD || /[?&]vr=1/.test(location.search) || (window.matchMedia && matchMedia("(pointer: coarse)").matches)) {
+      el("vr").hidden = false;
+      el("vr").disabled = false;
+    }
+  }
+  el("play").addEventListener("click", tryStart);
+  el("vr").addEventListener("click", enterVR);
+  el("reload").addEventListener("click", function () { location.reload(); });
+  // Contexto WebGL perdido (GPU reiniciada, celular sem memoria): o runtime nao recria os objetos de GPU, entao
+  // o jogo morria em silencio (canvas com rosto triste, audio tocando). Avisa e oferece recarregar.
+  el("canvas").addEventListener("webglcontextlost", function () {
+    if (!started) return;
+    log("[event] contexto WebGL perdido");
+    el("progress").hidden = true;
+    el("play").hidden = true;
+    el("vr").hidden = true;
+    el("reload").hidden = false;
+    el("status").textContent = "A tela do jogo foi perdida (GPU reiniciada). Recarregue para continuar.";
+    el("overlay").hidden = false;
+    stopTouch();
+    // suspend, nao close: o runtime segue vivo e o audio dele quebrava com "AudioContext is closed".
+    var M = window.Module, ctx = M && ((M.rangeAudio && M.rangeAudio.ctx) || (M.SDL2 && M.SDL2.audioContext));
+    if (ctx && ctx.state === "running") ctx.suspend().catch(function () {});
+  }, false);
+
+  // Pre-voo: eventos estruturados do runtime tem precedencia; o parser de console
+  // permanece apenas para binarios antigos e caminhos que ainda nao emitem eventos.
+  var preflight = /[?&]preflight=1/.test(location.search);
+  var pf = { shaders: [], python: [], diagnostics: [], contextLost: false, runtimeInitialized: false,
+             runtimeAborted: "", failure: "" };
+  var pfOpenShader = null, pfPyOpen = false, pfSeen = {}, pfStructuredShader = false;
+  var pfStructuredPyKinds = {};
+  function pfAddPy(rec) {
+    // O mesmo erro se repete a cada frame do controller; um registro por causa basta.
+    // Heuristica de console nao duplica um erro que ja chegou como evento estruturado.
+    if (!rec.structured && pfStructuredPyKinds[rec.kind]) return;
+    var key = rec.kind + "|" + (rec.module || "") + "|" + (rec.file || "") + "|" + (rec.origin || "") + "|" + rec.text;
+    if (!pfSeen[key]) { pfSeen[key] = true; pf.python.push(rec); }
+  }
+  function pfAddShader(rec) {
+    var key = rec.operation + "|" + rec.stage + "|" + (rec.material || "") + "|" + rec.log;
+    if (!pfSeen[key]) { pfSeen[key] = true; pf.shaders.push(rec); }
+  }
+  function pfDiagnostic(rec) {
+    if (!rec || rec.version !== 1 || typeof rec.category !== "string") return;
+    pf.diagnostics.push(rec);
+    if (rec.category === "shader" && rec.severity === "error") {
+      pfStructuredShader = true;
+      pfAddShader({ material: rec.origin || "", stage: rec.stage || "", operation: rec.operation || "",
+                    log: rec.log || "", structured: true });
+    }
+    else if (rec.category === "python" && rec.severity === "error") {
+      var kind = rec.exception_type || "Exception";
+      pfStructuredPyKinds[kind] = true;
+      var mod = "";
+      var mm = /(?:ModuleNotFoundError|ImportError).*?['"]([\w.]+)['"]/.exec(rec.message || "");
+      if (mm) mod = mm[1];
+      pfAddPy({ kind: kind, module: mod, file: "", text: rec.message || "", origin: rec.origin || "",
+                context: rec.context || "", traceback: rec.traceback || "", structured: true });
+    }
+  }
+  function pfLine(t) {
+    t = t.replace(/\x1b\[[0-9;]*m/g, "");
+    // O log do compilador GLSL chega em linhas soltas depois do cabecalho; outra linha fecha.
+    if (pfOpenShader) {
+      if (/^\s*(ERROR|WARNING):/.test(t)) { pfOpenShader.log += "\n" + t; return; }
+      pfOpenShader = null;
+    }
+    var m = /(ModuleNotFoundError|ImportError)\b.*?['"]([\w.]+)['"]/.exec(t);
+    if (m) { pfAddPy({ kind: m[1], module: m[2], file: "", text: t }); return; }
+    m = /FileNotFoundError.*?['"]([^'"]+)['"]/.exec(t);
+    if (m) { pfAddPy({ kind: "FileNotFoundError", file: m[1], text: t }); return; }
+    if (/Traceback \(most recent/.test(t) || /Python\W*.*script error/i.test(t)) { pfPyOpen = true; return; }
+    if (pfPyOpen) {
+      m = /^([\w.]*(Error|Exception))\b/.exec(t);
+      if (m) { pfPyOpen = false; pfAddPy({ kind: m[1], text: t, file: "" }); return; }
+    }
+    if (!pfStructuredShader && /shader/i.test(t) && /\b(fail(?:ed|ure)?|error|unable|cannot|invalid|unsuccessful)\b/i.test(t)) {
+      var rec = { material: "", stage: /vertex/i.test(t) ? "vertex" : /fragment/i.test(t) ? "fragment" : "?", log: t,
+                  structured: false };
+      pfAddShader(rec);
+      pfOpenShader = rec;
+    }
+  }
+  function pfProbeGL() {
+    try {
+      var c = document.createElement("canvas");
+      var gl = c.getContext("webgl2");
+      if (gl) return { version: 2, missing_extensions: [] };
+      return { version: c.getContext("webgl") ? 1 : 0, missing_extensions: [],
+               error: "WebGL 2 indisponivel" };
+    } catch (e) { return { version: 0, missing_extensions: [], error: String(e) }; }
+  }
+  function hex(buf) {
+    return Array.prototype.map.call(new Uint8Array(buf), function (b) { return ("0" + b.toString(16)).slice(-2); }).join("");
+  }
+  function pfFiles() {
+    return fetch("manifest.json?v=" + encodeURIComponent(VERSION), { cache: "no-store" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      }).then(function (man) {
+        if (!man || typeof man.files !== "object") throw new Error("manifesto sem lista de arquivos");
+        return man;
+      }).catch(function (e) {
+        return { files: {}, preflight_manifest_error: String(e) };
+      })
+      .then(function (man) {
+        if (man.preflight_manifest_error) {
+          return [{ name: "manifest.json", status: null, mime: "", error: man.preflight_manifest_error }];
+        }
+        var names = Object.keys(man.files || {}).filter(function (n) {
+          return n !== "manifest.json" && n !== "SHA256SUMS.txt";
+        });
+        return Promise.all(names.map(function (n) {
+          var rec = { name: n, status: null, mime: "", error: "", expected_sha256: man.files[n].sha256 };
+          return fetch(n.split("/").map(encodeURIComponent).join("/") + "?v=" + encodeURIComponent(VERSION), { cache: "no-store" }).then(function (r) {
+            rec.status = r.status;
+            rec.mime = (r.headers.get("content-type") || "").split(";")[0];
+            return r.arrayBuffer();
+          }).then(function (buf) {
+            if (window.crypto && crypto.subtle) return crypto.subtle.digest("SHA-256", buf).then(function (d) { rec.sha256 = hex(d); });
+          }).catch(function (e) { rec.error = String(e); }).then(function () { return rec; });
+        }));
+      });
+  }
+  function pfBuild(files) {
+    return { schema: "range-web-preflight", schema_version: 2,
+             cross_origin_isolated: !!window.crossOriginIsolated,
+             webgl: pfProbeGL(), files: files, context_lost: pf.contextLost,
+             runtime_initialized: pf.runtimeInitialized, runtime_aborted: pf.runtimeAborted,
+             runtime_failure: pf.failure,
+             diagnostics: pf.diagnostics, shader_errors: pf.shaders, python_errors: pf.python };
+  }
+  if (preflight) {
+    document.body.classList.add("debug");
+    var _print = Module.print, _printErr = Module.printErr;
+    Module.print = function (t) { pfLine(String(t)); _print(t); };
+    Module.printErr = function (t) { pfLine(String(t)); _printErr(t); };
+    Module.onDiagnostic = pfDiagnostic;
+    el("canvas").addEventListener("webglcontextlost", function () { pf.contextLost = true; }, false);
+    var pfFilesCache = null;
+    window.rangePreflight = function () {
+      var p = pfFilesCache ? Promise.resolve(pfFilesCache) : pfFiles().then(function (f) { return (pfFilesCache = f); });
+      return p.then(pfBuild);
+    };
+    var box = document.createElement("pre");
+    box.id = "preflight";
+    box.style.cssText = "position:fixed;top:0;right:0;max-width:45%;max-height:60%;overflow:auto;margin:0;" +
+                        "background:rgba(0,0,0,.85);color:#8cf;font:11px monospace;padding:6px;z-index:9";
+    document.body.appendChild(box);
+    var pfRefresh = function () {
+      window.rangePreflight().then(function (r) { box.textContent = JSON.stringify(r, null, 2); });
+    };
+    setInterval(pfRefresh, 2000);
+    pfRefresh();
+    // &post=1: o editor (range_web/preflight_run.py) espera o relatorio em POST /__preflight.
+    if (/[?&]post=1/.test(location.search)) {
+      var pfDelay = Number((/[?&]delay=(\d+)/.exec(location.search) || [0, 12])[1]) * 1000;
+      setTimeout(function () {
+        window.rangePreflight().then(function (r) {
+          return fetch("__preflight", { method: "POST", body: JSON.stringify(r) });
+        });
+      }, pfDelay);
+    }
+  }
+
+  document.body.appendChild(script);
+})();
+</script>
+</body>
+</html>
